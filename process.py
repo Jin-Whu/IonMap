@@ -15,6 +15,7 @@ class TecMap(object):
     latrange = None
     lonrange = None
     startepoch = None
+    endepoch = None
 
     def __init__(self):
         """Initialize."""
@@ -24,20 +25,21 @@ class TecMap(object):
         self.epoch = None
 
 
-def process(targetpath, storepath, interval):
+def roundb(num, base=10):
+    return int(base * round(float(num) / base))
+
+
+def process(targetpath, storepath, interval, start=None, end=None, bound=None, colorbar=100, ratio=10./8):
     """"process.
 
     Args:
         targetpath:target file path.
         storepath:store file path.
         interval:plot interval.
+        bound:bound
+        colorbar:colorbar range
+        ratio:ratio
     """
-    try:
-        interval = int(interval)
-    except:
-        print 'interval should be integer!'
-        return
-
     if not os.path.exists(targetpath):
         print 'Nont find %s' % targetpath
         return
@@ -54,13 +56,27 @@ def process(targetpath, storepath, interval):
     with open(targetpath) as f:
         if not readheader(f):
             return
-        epoch = TecMap.startepoch
+        if not start:
+            epoch = TecMap.startepoch
+        else:
+            hm = map(int, start.split(':'))
+            epoch = TecMap.startepoch
+            epoch = datetime.datetime(epoch.year, epoch.month, epoch.day, hm[0], hm[1], 0)
+            TecMap.startepoch = epoch
+        if end:
+            hm = map(int, start.split(':'))
+            endepoch = TecMap.startepoch
+            endepoch = datetime.datetime(epoch.year, epoch.month, epoch.day, hm[0], hm[1], 0)
+            TecMap.endepoch = endepoch
         for line in f:
             if 'START OF TEC MAP' in line:
                 tecmap = TecMap()
-                if not readtecmap(f, epoch, tecmap):
+                if not readtecmap(f, interval, tecmap):
                     continue
-                plottecmap(tecmap, storepath)
+                plottecmap(tecmap, storepath, bound, colorbar, ratio)
+                if TecMap.endepoch:
+                    if epoch == TecMap.endepoch:
+                        break
                 epoch += datetime.timedelta(seconds=interval)
             if 'START OF RMS MAP' in line:
                 break
@@ -93,12 +109,12 @@ def readheader(f):
         return 0
 
 
-def readtecmap(f, epoch, tecmap):
+def readtecmap(f, interval, tecmap):
     """read tec map data.
 
     Arg:
         f:file handle.
-        epoch:epoch of tec map.
+        interval:interval.
         tecmap:Tec Map.
     """
     try:
@@ -106,7 +122,8 @@ def readtecmap(f, epoch, tecmap):
             if 'EPOCH OF CURRENT MAP' in line:
                 datelst = map(int, line[:line.index('E')].split())
                 cur_epoch = datetime.datetime(*datelst)
-                if cur_epoch != epoch:
+                seconds = int((cur_epoch - TecMap.startepoch).total_seconds())
+                if seconds % interval != 0:
                     return 0
                 tecmap.epoch = cur_epoch
                 continue
@@ -131,40 +148,56 @@ def readtecmap(f, epoch, tecmap):
         return 0
 
 
-def plottecmap(tecmap, storepath):
+def plottecmap(tecmap, storepath, bound=None, colorbar=100, ratio=10./8):
     """Plot tecmap.
 
     Arg:
         tecmap:Tec Map.
         storepath:store file path.
+        bound:bound
+        ratio:axes ratio
     """
     try:
         plt.style.use('ggplot')
+        if not bound:
+            lonmin = TecMap.lonrange[0]
+            lonmax = TecMap.lonrange[1]
+            latmin = TecMap.latrange[1]
+            latmax = TecMap.latrange[0]
+        else:
+            lonmin = bound[0]
+            lonmax = bound[1]
+            latmin = bound[2]
+            latmax = bound[3]
         m = Basemap(
             projection='cyl',
-            llcrnrlon=TecMap.lonrange[0],
-            urcrnrlon=TecMap.lonrange[1],
-            llcrnrlat=TecMap.latrange[1],
-            urcrnrlat=TecMap.latrange[0])
+            llcrnrlon=lonmin,
+            urcrnrlon=lonmax,
+            llcrnrlat=latmin,
+            urcrnrlat=latmax,
+            fix_aspect=False)
+        m.aspect = ratio
         m.drawparallels(
-            np.linspace(-80, 80, 5),
+            np.arange(roundb(latmin), latmax, 10),
             labels=[1, 0, 0, 0],
             linewidth=0,
             size=10,
             weight='bold')
         m.drawmeridians(
-            np.linspace(-180, 180, 7),
+            np.arange(roundb(lonmin), lonmax, 10),
             labels=[0, 0, 0, 1],
             linewidth=0,
             size=10,
             weight='bold')
+        m.drawcoastlines()
+        m.drawcountries()
 
         m.pcolormesh(
             tecmap.LON,
             tecmap.LAT,
             tecmap.value,
             vmin=0,
-            vmax=100,
+            vmax=colorbar,
             shading='gouraud',
             latlon=True)
         cb = m.colorbar(location='right', size="5%", pad='2%')
@@ -177,4 +210,5 @@ def plottecmap(tecmap, storepath):
         plt.clf()
         plt.close()
     except:
+        raise
         return
